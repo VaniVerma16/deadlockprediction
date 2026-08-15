@@ -1,0 +1,80 @@
+{
+  "dataset": "dataset/v2",
+  "errors": [],
+  "splits": {
+    "test": {
+      "largest_topology_label_signature_fraction": 0.06260869565217392,
+      "runs": 144,
+      "seeds": [
+        109,
+        110
+      ],
+      "sequence_labels": {
+        "deadlocked": 936,
+        "pre_deadlock": 1284,
+        "safe": 3075
+      },
+      "sequences": 5295,
+      "snapshot_labels": {
+        "deadlocked": 1872,
+        "pre_deadlock": 2520,
+        "safe": 7108
+      },
+      "snapshots": 11500,
+      "unique_topology_label_signatures": 256
+    },
+    "train": {
+      "largest_topology_label_signature_fraction": 0.06233766233766234,
+      "runs": 504,
+      "seeds": [
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107
+      ],
+      "sequence_labels": {
+        "deadlocked": 3276,
+        "pre_deadlock": 4382,
+        "safe": 10903
+      },
+      "sequences": 18561,
+      "snapshot_labels": {
+        "deadlocked": 6552,
+        "pre_deadlock": 8820,
+        "safe": 25053
+      },
+      "snapshots": 40425,
+      "unique_topology_label_signatures": 340
+    },
+    "validation": {
+      "largest_topology_label_signature_fraction": 0.06287111421585749,
+      "runs": 72,
+      "seeds": [
+        108
+      ],
+      "sequence_labels": {
+        "deadlocked": 468,
+        "pre_deadlock": 635,
+        "safe": 1527
+      },
+      "sequences": 2630,
+      "snapshot_labels": {
+        "deadlocked": 936,
+        "pre_deadlock": 1260,
+        "safe": 3530
+      },
+      "snapshots": 5726,
+      "unique_topology_label_signatures": 199
+    }
+  },
+  "totals": {
+    "runs": 720,
+    "sequences": 26486,
+    "snapshots": 57651
+  },
+  "valid": true,
+  "warnings": []
+}

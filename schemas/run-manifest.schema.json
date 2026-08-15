@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/deadlock-run-manifest.schema.json",
+  "title": "Curated deadlock experiment run",
+  "type": "object",
+  "required": [
+    "run_id",
+    "split",
+    "scenario",
+    "mode",
+    "noise",
+    "threads",
+    "seed",
+    "timeout_ms",
+    "kernel",
+    "machine",
+    "workload_status",
+    "perf_valid",
+    "labels_valid"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "dataset_version": {"type": "string", "minLength": 1},
+    "snapshot_source": {"type": "string", "minLength": 1},
+    "split": {"enum": ["train", "validation", "test"]},
+    "scenario": {"enum": ["abba", "nway", "dining"]},
+    "mode": {"enum": ["safe", "deadlock"]},
+    "noise": {"enum": ["none", "cpu", "memory", "mixed"]},
+    "threads": {"type": "integer", "minimum": 2, "maximum": 64},
+    "seed": {"type": "integer", "minimum": 0},
+    "timeout_ms": {"type": "integer", "minimum": 1},
+    "kernel": {"type": "string", "minLength": 1},
+    "machine": {"type": "string", "minLength": 1},
+    "workload_status": {"type": "integer"},
+    "perf_valid": {"type": "boolean"},
+    "labels_valid": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

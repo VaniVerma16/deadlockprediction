@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/deadlock-temporal-sequence.schema.json",
+  "title": "Temporal synchronization graph sequence index",
+  "type": "object",
+  "required": [
+    "sequence_id", "run_id", "snapshot_ids", "start_ts_ns", "end_ts_ns",
+    "duration_ns", "label", "has_cycle", "provenance"
+  ],
+  "properties": {
+    "sequence_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "snapshot_ids": {
+      "type": "array", "minItems": 2,
+      "items": {"type": "string", "minLength": 1}, "uniqueItems": true
+    },
+    "start_ts_ns": {"type": "integer", "minimum": 0},
+    "end_ts_ns": {"type": "integer", "minimum": 0},
+    "duration_ns": {"type": "integer", "minimum": 0},
+    "label": {"enum": ["safe", "pre_deadlock", "deadlocked"]},
+    "has_cycle": {"type": "boolean"},
+    "provenance": {
+      "type": "object",
+      "required": ["scenario", "mode", "noise", "threads", "seed"],
+      "properties": {
+        "scenario": {"enum": ["abba", "nway", "dining"]},
+        "mode": {"enum": ["safe", "deadlock"]},
+        "noise": {"enum": ["none", "cpu", "memory", "mixed"]},
+        "threads": {"type": "integer", "minimum": 2},
+        "seed": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

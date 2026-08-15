@@ -1,0 +1,33 @@
+#cloud-config
+users:
+  - default
+  - name: codex
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+package_update: true
+write_files:
+  - path: /etc/sysctl.d/99-deadlock-dataset.conf
+    permissions: '0644'
+    content: |
+      kernel.perf_event_paranoid = 1
+      kernel.kptr_restrict = 0
+packages:
+  - build-essential
+  - clang
+  - llvm
+  - libbpf-dev
+  - libelf-dev
+  - zlib1g-dev
+  - linux-tools-generic
+  - python3
+  - rsync
+  - openssh-server
+  - stress-ng
+runcmd:
+  - [mkdir, -p, /home/codex/deadlock-dataset]
+  - [chown, -R, codex:codex, /home/codex/deadlock-dataset]
+  - [sysctl, --system]
+final_message: "Deadlock dataset VM is ready"

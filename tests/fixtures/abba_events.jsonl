@@ -1,0 +1,7 @@
+{"run_id":"fixture-abba","ts_ns":0,"source":"controller","event":"run_start"}
+{"run_id":"fixture-abba","ts_ns":10000000,"source":"ebpf","event":"lock_acquired","pid":10,"tid":11,"lock_addr":"0xa","ret":0}
+{"run_id":"fixture-abba","ts_ns":20000000,"source":"ebpf","event":"lock_acquired","pid":10,"tid":12,"lock_addr":"0xb","ret":0}
+{"run_id":"fixture-abba","ts_ns":30000000,"source":"ebpf","event":"futex_wait","pid":10,"tid":11,"lock_addr":"0xb"}
+{"run_id":"fixture-abba","ts_ns":40000000,"source":"ebpf","event":"futex_wait","pid":10,"tid":12,"lock_addr":"0xa"}
+{"run_id":"fixture-abba","ts_ns":100000000,"source":"controller","event":"run_end"}
+

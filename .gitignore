@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.DS_Store
+build/
+bin/
+*.o
+*.skel.h
+vm/
+runs/
+tmp/
+
+# Keep dataset documentation and reports, not generated graph records/checkpoints.
+dataset/**/*.jsonl
+dataset/**/*.pt

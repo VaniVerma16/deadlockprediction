@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/deadlock-rag-snapshot.schema.json",
+  "title": "Labeled resource-allocation graph snapshot",
+  "type": "object",
+  "required": [
+    "run_id",
+    "ts_ns",
+    "nodes",
+    "edges",
+    "cycle_nodes",
+    "has_cycle",
+    "label",
+    "label_metadata",
+    "graph_features",
+    "provenance"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "ts_ns": {"type": "integer", "minimum": 0},
+    "snapshot_id": {"type": "string", "minLength": 1},
+    "snapshot_index": {"type": "integer", "minimum": 0},
+    "delta_ns": {"type": "integer", "minimum": 0},
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "features"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "type": {"enum": ["thread", "lock"]},
+          "features": {
+            "type": "object",
+            "properties": {
+              "is_waiting": {"type": "integer", "enum": [0, 1]},
+              "wait_ns": {"type": "integer", "minimum": 0},
+              "has_owner": {"type": "integer", "enum": [0, 1]},
+              "scheduler_switches": {"type": "integer", "minimum": 0},
+              "wakeups": {"type": "integer", "minimum": 0},
+              "cpu_migrations": {"type": "integer", "minimum": 0},
+              "last_cpu": {"type": "integer", "minimum": -1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "type"],
+        "properties": {
+          "source": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1},
+          "type": {"enum": ["owned_by", "waits_for"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "cycle_nodes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "has_cycle": {"type": "boolean"},
+    "label": {"enum": ["safe", "unsafe", "pre_deadlock", "deadlocked"]},
+    "label_metadata": {
+      "type": "object",
+      "required": ["first_cycle_ts_ns", "unsafe_window_ns", "confirmation_ns"],
+      "properties": {
+        "first_cycle_ts_ns": {"type": ["integer", "null"], "minimum": 0},
+        "unsafe_window_ns": {"type": "integer", "minimum": 0},
+        "confirmation_ns": {"type": "integer", "minimum": 0},
+        "start_policy": {"enum": ["run", "first_mutex_event", "first_graph_edge"]},
+        "event_aligned": {"type": "boolean"},
+        "post_cycle_ns": {"type": ["integer", "null"], "minimum": 0},
+        "mutex_filter": {"enum": ["ground_truth", "observed"]},
+        "drop_empty": {"type": "boolean"},
+        "drop_edgeless": {"type": "boolean"},
+        "deduplicated": {"type": "boolean"}
+        ,"class_vocabulary": {
+          "type": "array",
+          "items": {"enum": ["safe", "pre_deadlock", "deadlocked"]},
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "graph_features": {
+      "type": "object",
+      "properties": {
+        "task_clock": {"type": ["number", "null"]},
+        "context_switches": {"type": ["number", "null"]},
+        "cpu_migrations": {"type": ["number", "null"]},
+        "page_faults": {"type": ["number", "null"]},
+        "cycles": {"type": ["number", "null"]},
+        "instructions": {"type": ["number", "null"]},
+        "cache_misses": {"type": ["number", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["scenario", "mode", "seed"],
+      "properties": {
+        "scenario": {"enum": ["abba", "nway", "dining"]},
+        "mode": {"enum": ["safe", "deadlock"]},
+        "seed": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

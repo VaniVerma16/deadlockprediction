@@ -1,0 +1,16 @@
+{
+  "generation_id": "v2-20260815",
+  "scenarios": ["abba", "nway", "dining"],
+  "modes": ["safe", "deadlock"],
+  "thread_counts": [2, 4, 5, 8],
+  "seeds": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110],
+  "noise": ["none", "cpu", "memory", "mixed"],
+  "timeout_ms": 2000,
+  "iterations": 32,
+  "snapshot_interval_ms": 10,
+  "sequence_length": 8,
+  "sequence_stride": 2,
+  "unsafe_window_ms": 300,
+  "confirmation_ms": 50,
+  "post_cycle_ms": 300
+}

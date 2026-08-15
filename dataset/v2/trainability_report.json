@@ -1,0 +1,58 @@
+{
+  "epoch_losses": [
+    0.21291737502658778,
+    0.10302348420311241,
+    0.08126925378220473,
+    0.07233001778652753
+  ],
+  "epochs": 4,
+  "finite_gradients": true,
+  "input_exclusions": [
+    "label",
+    "has_cycle",
+    "cycle_nodes",
+    "label_metadata",
+    "provenance",
+    "run_id",
+    "snapshot_id",
+    "graph_features"
+  ],
+  "loss_decreased": true,
+  "model": "relational GraphSAGE + GRU",
+  "seed": 20260815,
+  "train_label_counts": {
+    "deadlocked": 1000,
+    "pre_deadlock": 1000,
+    "safe": 1000
+  },
+  "train_samples": 3000,
+  "validation": {
+    "accuracy": 0.9875,
+    "confusion_matrix": [
+      [
+        395,
+        5,
+        0
+      ],
+      [
+        10,
+        390,
+        0
+      ],
+      [
+        0,
+        0,
+        400
+      ]
+    ],
+    "loss": 0.05543705405667424,
+    "macro_f1": 0.9874995116996758,
+    "samples": 1200
+  },
+  "validation_label_counts": {
+    "deadlocked": 400,
+    "pre_deadlock": 400,
+    "safe": 400
+  },
+  "validation_majority_baseline_accuracy": 0.3333333333333333
+}
