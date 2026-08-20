@@ -11,5 +11,5 @@ resource-allocation graph dataset.
 
 Every graph has at least one node and one directed ownership or wait edge.
 Splits are run-disjoint and stratified by scenario, mode, noise, and thread
-count. See [`../../DATASET_CARD.md`](../../DATASET_CARD.md) for the full schema,
+count. See [`DATASET_CARD.md`](DATASET_CARD.md) for the historical v1 schema,
 collection methodology, statistics, limitations, and reproduction commands.
