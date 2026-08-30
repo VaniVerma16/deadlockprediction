@@ -1,0 +1,123 @@
+{
+  "class_vocabulary": [
+    "safe",
+    "pre_deadlock",
+    "deadlocked"
+  ],
+  "confirmation_ms": 50,
+  "dataset_version": "v3",
+  "generator_revision": "v3.1-wait-age-consistency",
+  "generator_seed": 20260830,
+  "input_exclusions": [
+    "label",
+    "label_metadata",
+    "has_cycle",
+    "cycle_nodes",
+    "targets",
+    "provenance",
+    "run_id",
+    "snapshot_id",
+    "graph_features"
+  ],
+  "origin": "fully synthetic Python generator; not QEMU/eBPF telemetry",
+  "prediction_horizon_ms": 300,
+  "recommended_class_weights": {
+    "deadlocked": 1.6268495586460914,
+    "pre_deadlock": 1.9979722352207143,
+    "safe": 0.5305581443512478
+  },
+  "scenario_vocabulary": [
+    "two_process_deadlock",
+    "cycle_3_5",
+    "long_chain_no_cycle",
+    "almost_cycle_pre_deadlock",
+    "multiple_cycles",
+    "cycle_with_safe_processes",
+    "resource_contention_no_deadlock",
+    "same_graph_different_states",
+    "delayed_deadlock",
+    "deadlock_recovery",
+    "imbalanced_resource_allocation"
+  ],
+  "sequence_length": 8,
+  "sequence_stride": {
+    "test": 8,
+    "train": 4,
+    "validation": 8
+  },
+  "snapshot_interval_ms": 10,
+  "split_policy": "run-disjoint and seed-disjoint; validation/test use shifted larger-graph parameter distributions and non-overlapping windows",
+  "splits": {
+    "test": {
+      "run_count": 396,
+      "scenario_sequences": {
+        "almost_cycle_pre_deadlock": 500,
+        "cycle_3_5": 496,
+        "cycle_with_safe_processes": 514,
+        "deadlock_recovery": 499,
+        "delayed_deadlock": 510,
+        "imbalanced_resource_allocation": 506,
+        "long_chain_no_cycle": 524,
+        "multiple_cycles": 501,
+        "resource_contention_no_deadlock": 503,
+        "same_graph_different_states": 498,
+        "two_process_deadlock": 498
+      },
+      "sequence_count": 5549,
+      "sequence_labels": {
+        "deadlocked": 1045,
+        "pre_deadlock": 873,
+        "safe": 3631
+      },
+      "snapshot_count": 45786
+    },
+    "train": {
+      "run_count": 1848,
+      "scenario_sequences": {
+        "almost_cycle_pre_deadlock": 4611,
+        "cycle_3_5": 4606,
+        "cycle_with_safe_processes": 4714,
+        "deadlock_recovery": 4636,
+        "delayed_deadlock": 4704,
+        "imbalanced_resource_allocation": 4656,
+        "long_chain_no_cycle": 4589,
+        "multiple_cycles": 4699,
+        "resource_contention_no_deadlock": 4684,
+        "same_graph_different_states": 4695,
+        "two_process_deadlock": 4642
+      },
+      "sequence_count": 51236,
+      "sequence_labels": {
+        "deadlocked": 10498,
+        "pre_deadlock": 8548,
+        "safe": 32190
+      },
+      "snapshot_count": 215051
+    },
+    "validation": {
+      "run_count": 396,
+      "scenario_sequences": {
+        "almost_cycle_pre_deadlock": 510,
+        "cycle_3_5": 512,
+        "cycle_with_safe_processes": 507,
+        "deadlock_recovery": 503,
+        "delayed_deadlock": 502,
+        "imbalanced_resource_allocation": 510,
+        "long_chain_no_cycle": 508,
+        "multiple_cycles": 496,
+        "resource_contention_no_deadlock": 505,
+        "same_graph_different_states": 508,
+        "two_process_deadlock": 509
+      },
+      "sequence_count": 5570,
+      "sequence_labels": {
+        "deadlocked": 1120,
+        "pre_deadlock": 908,
+        "safe": 3542
+      },
+      "snapshot_count": 45872
+    }
+  },
+  "task": "temporal thread-mutex graph state classification and future deadlock prediction",
+  "validation_multi_label_topologies": 979
+}

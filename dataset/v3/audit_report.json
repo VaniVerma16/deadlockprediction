@@ -1,0 +1,155 @@
+{
+  "dataset": "dataset/v3",
+  "integrity": {
+    "errors": [],
+    "multiple_cycle_snapshots": 7752,
+    "new_wait_age_violations": 0,
+    "new_wait_events_checked": 29507,
+    "passed": true,
+    "persistent_wait_age_violations": 0,
+    "runs_with_confirmed_deadlock_then_safe_recovery": 240,
+    "safe_snapshots_containing_transient_cycles": 2209,
+    "split_seed_counts": {
+      "test": 396,
+      "train": 1848,
+      "validation": 396
+    },
+    "splits": {
+      "test": {
+        "runs": 396,
+        "scenarios": 11,
+        "sequence_labels": {
+          "deadlocked": 1045,
+          "pre_deadlock": 873,
+          "safe": 3631
+        },
+        "sequences": 5549,
+        "snapshot_labels": {
+          "deadlocked": 8313,
+          "pre_deadlock": 6930,
+          "safe": 30543
+        },
+        "snapshots": 45786
+      },
+      "train": {
+        "runs": 1848,
+        "scenarios": 11,
+        "sequence_labels": {
+          "deadlocked": 10498,
+          "pre_deadlock": 8548,
+          "safe": 32190
+        },
+        "sequences": 51236,
+        "snapshot_labels": {
+          "deadlocked": 41933,
+          "pre_deadlock": 34230,
+          "safe": 138888
+        },
+        "snapshots": 215051
+      },
+      "validation": {
+        "runs": 396,
+        "scenarios": 11,
+        "sequence_labels": {
+          "deadlocked": 1120,
+          "pre_deadlock": 908,
+          "safe": 3542
+        },
+        "sequences": 5570,
+        "snapshot_labels": {
+          "deadlocked": 8924,
+          "pre_deadlock": 7260,
+          "safe": 29688
+        },
+        "snapshots": 45872
+      }
+    }
+  },
+  "shortcut_baselines": {
+    "cycle_only_rule": {
+      "accuracy": 0.8326750448833035,
+      "confusion_matrix": [
+        [
+          3518,
+          0,
+          24
+        ],
+        [
+          786,
+          0,
+          122
+        ],
+        [
+          0,
+          0,
+          1120
+        ]
+      ],
+      "macro_f1": 0.6118574683358764
+    },
+    "last_snapshot_tree_with_cycle": {
+      "accuracy": 0.7199281867145422,
+      "confusion_matrix": [
+        [
+          2379,
+          1145,
+          18
+        ],
+        [
+          286,
+          517,
+          105
+        ],
+        [
+          0,
+          6,
+          1114
+        ]
+      ],
+      "macro_f1": 0.7044069388545755
+    },
+    "last_snapshot_tree_without_cycle": {
+      "accuracy": 0.5732495511669659,
+      "confusion_matrix": [
+        [
+          2201,
+          1093,
+          248
+        ],
+        [
+          297,
+          527,
+          84
+        ],
+        [
+          393,
+          262,
+          465
+        ]
+      ],
+      "macro_f1": 0.5157316526410306
+    },
+    "max_wait_only_tree": {
+      "accuracy": 0.5601436265709157,
+      "confusion_matrix": [
+        [
+          2088,
+          1082,
+          372
+        ],
+        [
+          292,
+          513,
+          103
+        ],
+        [
+          340,
+          261,
+          519
+        ]
+      ],
+      "macro_f1": 0.509697682628882
+    },
+    "note": "Baselines use validation only. The test split is not used for model selection or shortcut measurement."
+  }
+}

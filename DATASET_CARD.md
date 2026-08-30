@@ -1,6 +1,6 @@
 # Temporal Synchronization Graph Dataset
 
-## Current release: v2
+## Observational release: v2
 
 The current dataset release is [`dataset/v2`](dataset/v2). It contains
 fixed-cadence temporal thread-mutex graphs reconstructed from eBPF telemetry
@@ -51,6 +51,26 @@ Detailed v2 documentation and reports:
 - [`dataset/v2/validation_report.json`](dataset/v2/validation_report.json)
 - [`dataset/v2/trainability_report.json`](dataset/v2/trainability_report.json)
 - [`output/pdf/temporal-synchronization-graph-dataset-v2-documentation.pdf`](output/pdf/temporal-synchronization-graph-dataset-v2-documentation.pdf)
+
+## Synthetic benchmark: v3
+
+[`dataset/v3`](dataset/v3) is a larger synthetic benchmark for temporal model
+development. It contains 2,640 independent generated runs, 306,709 snapshots,
+and 62,355 eight-snapshot sequences across 11 scenario families. Its train,
+validation, and test runs and seeds are disjoint; evaluation windows do not
+overlap. Training labels are 62.8% safe, 16.7% pre-deadlock, and 20.5%
+deadlocked, with recommended class weights recorded in its metadata.
+
+The v3 audit reports zero structural or causal errors, including zero invalid
+new-wait ages across 29,507 checked transitions. A relational GraphSAGE-GRU
+smoke test consumed the format, produced finite gradients, and reduced loss.
+This release is fully generated in Python: it represents simulated telemetry
+and does not replace v2 as evidence of QEMU/eBPF collection behavior.
+
+- [`dataset/v3/README.md`](dataset/v3/README.md)
+- [`dataset/v3/metadata.json`](dataset/v3/metadata.json)
+- [`dataset/v3/audit_report.json`](dataset/v3/audit_report.json)
+- [`dataset/v3/trainability_report.json`](dataset/v3/trainability_report.json)
 
 ## Historical releases
 
