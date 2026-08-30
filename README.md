@@ -4,7 +4,9 @@ This repository generates labeled resource-allocation graph snapshots from
 controlled pthread deadlock scenarios running in an ARM64 Linux QEMU guest.
 
 For dataset composition, schema, collection methodology, quality statistics,
-limitations, and loading examples, see the [dataset card](DATASET_CARD.md).
+limitations, and loading examples, see the [dataset card](DATASET_CARD.md). It
+documents both the observational QEMU/eBPF v2 release and the larger synthetic
+v3 temporal benchmark.
 
 ## What is implemented
 

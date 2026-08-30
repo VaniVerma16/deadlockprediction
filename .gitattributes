@@ -1,1 +1,2 @@
 dataset/v2/*.jsonl filter=lfs diff=lfs merge=lfs -text
+dataset/v3/*.jsonl.gz filter=lfs diff=lfs merge=lfs -text

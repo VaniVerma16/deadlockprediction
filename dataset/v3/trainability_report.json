@@ -1,0 +1,22 @@
+{
+  "dataset_scope": "deterministic 132-run v3 smoke build generated with the release generator",
+  "model": "relational GraphSAGE + GRU",
+  "epochs": 2,
+  "train_samples": 300,
+  "train_label_counts": {
+    "safe": 100,
+    "pre_deadlock": 100,
+    "deadlocked": 100
+  },
+  "epoch_losses": [1.0419526068787826, 0.8416903991448251],
+  "loss_decreased": true,
+  "finite_gradients": true,
+  "validation": {
+    "samples": 81,
+    "accuracy": 0.6666666666666666,
+    "macro_f1": 0.5689092516678723,
+    "majority_baseline_accuracy": 0.3333333333333333,
+    "confusion_matrix": [[27, 0, 0], [24, 1, 2], [0, 1, 26]]
+  },
+  "interpretation": "This verifies schema and optimization compatibility only; it is not a final performance result."
+}
