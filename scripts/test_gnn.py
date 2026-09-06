@@ -1,12 +1,14 @@
+#!/usr/bin/env python3
 """
 Evaluate the trained Temporal Relational GraphSAGE + GRU model
-on the held-out test split of dataset/v2.
+on the held-out TEST split of dataset/v3.
 
 IMPORTANT:
 - Does NOT train the model.
 - Does NOT modify best_model.pt.
-- Does NOT use the validation set.
-- Uses the exact model implementation from train_gnn.py.
+- Does NOT use the training or validation split.
+- Uses the exact model implementation and evaluation API
+  from the current train_gnn.py.
 """
 
 from __future__ import annotations
@@ -85,13 +87,47 @@ def main() -> int:
     checkpoint = torch.load(
         args.model,
         map_location=device,
+        weights_only=False,
     )
 
-    hidden_size = checkpoint["hidden_size"]
+    # --------------------------------------------------------
+    # Read configuration from checkpoint
+    # --------------------------------------------------------
+
+    config = checkpoint.get("config", {})
+
+    hidden_size = config.get(
+        "hidden_size",
+        checkpoint.get("hidden_size", 32),
+    )
+
+    input_size = config.get(
+        "input_size",
+        9,
+    )
+
+    focal_gamma = config.get(
+        "focal_gamma",
+        1.5,
+    )
+
+    pre_fp_penalty = config.get(
+        "pre_fp_penalty",
+        0.15,
+    )
+
+    print(f"Hidden size: {hidden_size}")
+    print(f"Input size: {input_size}")
+    print(f"Focal gamma: {focal_gamma}")
+    print(f"SAFE -> PRE penalty: {pre_fp_penalty}")
+
+    # --------------------------------------------------------
+    # Create model
+    # --------------------------------------------------------
 
     model = TemporalGraphClassifier(
+        input_size=input_size,
         hidden_size=hidden_size,
-        num_classes=len(LABELS),
     ).to(device)
 
     model.load_state_dict(
@@ -100,7 +136,6 @@ def main() -> int:
 
     model.eval()
 
-    print(f"Hidden size: {hidden_size}")
     print("✓ Model loaded")
 
     # --------------------------------------------------------
@@ -113,7 +148,6 @@ def main() -> int:
     test = TemporalSequenceDataset(
         args.dataset,
         "test",
-        device,
     )
 
     test_indices = list(range(len(test)))
@@ -130,7 +164,12 @@ def main() -> int:
 
     test_counts = test.label_counts()
 
-    for label, count in test_counts.items():
+    for class_id, count in sorted(test_counts.items()):
+        if 0 <= class_id < len(LABELS):
+            label = LABELS[class_id]
+        else:
+            label = str(class_id)
+
         print(f"  {label:15s}: {count:,}")
 
     # --------------------------------------------------------
@@ -142,18 +181,26 @@ def main() -> int:
     print("TEST EVALUATION")
     print("=" * 70)
 
-    # Loss is not used for selecting anything here.
-    # It is only supplied because run_epoch expects a criterion.
+    # The test set is never used for model selection.
+    # CrossEntropyLoss is sufficient here because the main purpose
+    # of this script is to report test predictions and metrics.
+    #
+    # run_epoch() itself applies the SAFE -> PRE_DEADLOCK penalty,
+    # matching the training/evaluation implementation.
+
     criterion = nn.CrossEntropyLoss()
 
     test_loss, test_metrics = run_epoch(
         model=model,
         dataset=test,
-        indices=test_indices,
         optimizer=None,
         criterion=criterion,
+        device=device,
         batch_size=args.batch_size,
+        focal_gamma=focal_gamma,
+        pre_fp_penalty=pre_fp_penalty,
         train=False,
+        seed=42,
     )
 
     # --------------------------------------------------------
@@ -190,7 +237,9 @@ def main() -> int:
     print()
     print("Per-class results:")
 
-    for label, values in test_metrics["per_class"].items():
+    for label in LABELS:
+        values = test_metrics["per_class"][label]
+
         print(
             f"  {label:15s} "
             f"P={values['precision']:.4f} "
@@ -206,6 +255,7 @@ def main() -> int:
     print()
     print("Confusion Matrix")
     print()
+
     print(
         f"{'Actual / Predicted':20s}"
         f"{'safe':>10s}"
@@ -213,16 +263,11 @@ def main() -> int:
         f"{'deadlocked':>14s}"
     )
 
-    inverse_labels = {
-        value: key
-        for key, value in LABELS.items()
-    }
-
     confusion = test_metrics["confusion_matrix"]
 
     for i, row in enumerate(confusion):
         print(
-            f"{inverse_labels[i]:20s}"
+            f"{LABELS[i]:20s}"
             f"{row[0]:10d}"
             f"{row[1]:16d}"
             f"{row[2]:14d}"
@@ -242,7 +287,10 @@ def main() -> int:
             "model": str(args.model),
             "dataset": str(args.dataset),
             "device": str(device),
+            "input_size": input_size,
             "hidden_size": hidden_size,
+            "focal_gamma": focal_gamma,
+            "pre_fp_penalty": pre_fp_penalty,
             "test_samples": len(test_indices),
             "test_loss": test_loss,
             **test_metrics,

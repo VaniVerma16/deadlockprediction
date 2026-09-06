@@ -1,0 +1,71 @@
+{
+  "model": "outputs\\gnn_v5\\best_model_v5.pt",
+  "dataset": "dataset\\v3",
+  "deadlock_threshold": 0.7000000000000002,
+  "pre_threshold": 0.5600000000000002,
+  "metrics": {
+    "accuracy": 0.7615786628221302,
+    "macro_precision": 0.72770833005805,
+    "macro_recall": 0.7385666595915114,
+    "macro_f1": 0.7272494123009103,
+    "per_class": {
+      "safe": {
+        "precision": 0.8582363747703613,
+        "recall": 0.7719636463784082,
+        "f1": 0.8128171668841525,
+        "support": 3631
+      },
+      "pre_deadlock": {
+        "precision": 0.33984375,
+        "recall": 0.49828178694158076,
+        "f1": 0.4040873200185787,
+        "support": 873
+      },
+      "deadlocked": {
+        "precision": 0.9850448654037887,
+        "recall": 0.9454545454545454,
+        "f1": 0.96484375,
+        "support": 1045
+      }
+    },
+    "confusion_matrix": [
+      [
+        2803,
+        822,
+        6
+      ],
+      [
+        429,
+        435,
+        9
+      ],
+      [
+        34,
+        23,
+        988
+      ]
+    ]
+  },
+  "risk_metrics": {
+    "50ms": {
+      "precision": 0.9471799462846912,
+      "recall": 0.9168110918544194,
+      "f1": 0.9317481285777192
+    },
+    "100ms": {
+      "precision": 0.9432624113475178,
+      "recall": 0.8280155642023346,
+      "f1": 0.8818897637795275
+    },
+    "300ms": {
+      "precision": 0.9337349397590361,
+      "recall": 0.5752916224814422,
+      "f1": 0.7119422572178478
+    }
+  },
+  "safety_checks": {
+    "safe_to_pre": 822,
+    "deadlocked_to_pre": 23,
+    "deadlocked_to_safe": 34
+  }
+}

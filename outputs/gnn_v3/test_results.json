@@ -1,0 +1,49 @@
+{
+  "model": "outputs\\gnn_v3\\best_model.pt",
+  "dataset": "dataset\\v3",
+  "device": "cpu",
+  "hidden_size": 32,
+  "test_samples": 5549,
+  "test_loss": 0.45722702164911194,
+  "accuracy": 0.7361686790412687,
+  "macro_precision": 0.6984545880284719,
+  "macro_recall": 0.7421343351482221,
+  "macro_f1": 0.7087712813398608,
+  "per_class": {
+    "safe": {
+      "precision": 0.8709785522788204,
+      "recall": 0.7157807766455522,
+      "f1": 0.7857898715041572,
+      "support": 3631
+    },
+    "pre_deadlock": {
+      "precision": 0.3284416491963662,
+      "recall": 0.5383734249713631,
+      "f1": 0.4079861111111111,
+      "support": 873
+    },
+    "deadlocked": {
+      "precision": 0.8959435626102292,
+      "recall": 0.9722488038277513,
+      "f1": 0.9325378614043139,
+      "support": 1045
+    }
+  },
+  "confusion_matrix": [
+    [
+      2599,
+      947,
+      85
+    ],
+    [
+      370,
+      470,
+      33
+    ],
+    [
+      15,
+      14,
+      1016
+    ]
+  ]
+}

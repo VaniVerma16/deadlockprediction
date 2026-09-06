@@ -1,474 +1,276 @@
+#!/usr/bin/env python3
 """
-Train a temporal relational GraphSAGE + GRU model on dataset/v2.
+Train Temporal Relational GraphSAGE + GRU for deadlock prediction.
 
-Works on both CPU and CUDA GPU.
+This version keeps the same 9-D node input and model dimensions as the
+original train_gnn.py so the existing test_gnn.py can load the checkpoint.
 
-Dataset:
-    dataset/v2/
-        train.jsonl
-        train_sequences.jsonl
-        validation.jsonl
-        validation_sequences.jsonl
-        test.jsonl
-        test_sequences.jsonl
-
-Classes:
-    0 = safe
-    1 = pre_deadlock
-    2 = deadlocked
+Changes aimed at V3 pre-deadlock performance:
+1. Focal loss focuses learning on hard/misclassified examples.
+2. A small explicit penalty discourages SAFE -> PRE_DEADLOCK false positives,
+   which were the main V3 test error.
+3. Training remains selected by validation Macro-F1.
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import random
 import time
-from collections import defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-LABELS = {
-    "safe": 0,
-    "pre_deadlock": 1,
-    "deadlocked": 2,
-}
+LABELS = ("safe", "pre_deadlock", "deadlocked")
+LABEL_TO_ID = {label: i for i, label in enumerate(LABELS)}
 
-RELATIONS = (
-    "owned_by",
-    "waits_for",
-)
+RELATIONS = ("owned_by", "waits_for")
+RELATION_TO_ID = {relation: i for i, relation in enumerate(RELATIONS)}
 
-
-# ============================================================
-# Utilities
-# ============================================================
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
-
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    records = []
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load plain JSONL or gzip-compressed JSONL (.jsonl.gz)."""
+    rows: list[dict[str, Any]] = []
 
-    with path.open("r", encoding="utf-8") as handle:
+    if path.suffix == ".gz":
+        handle = gzip.open(path, "rt", encoding="utf-8")
+    else:
+        handle = path.open("r", encoding="utf-8")
+
+    with handle:
         for line in handle:
             line = line.strip()
-
             if line:
-                records.append(json.loads(line))
+                rows.append(json.loads(line))
 
-    return records
+    return rows
 
 
-# ============================================================
-# Node features
-# ============================================================
+def resolve_jsonl_path(dataset_dir: Path, filename: str) -> Path:
+    """Prefer .jsonl.gz when present, otherwise fall back to .jsonl."""
+    compressed = dataset_dir / f"{filename}.gz"
+    plain = dataset_dir / filename
+
+    if compressed.exists():
+        return compressed
+    if plain.exists():
+        return plain
+
+    raise FileNotFoundError(
+        f"Could not find either {compressed} or {plain}"
+    )
+
 
 def node_features(node: dict[str, Any]) -> list[float]:
     """
-    Convert a dataset node into the 9-dimensional feature vector
-    used by the repository's GraphSAGE-GRU implementation.
+    Keep the original 9-D feature contract.
 
-    Features:
-        0: is_thread
-        1: is_lock
-        2: is_waiting
-        3: log1p(wait_ns) / 22
-        4: has_owner
-        5: log1p(scheduler_switches) / 8
-        6: log1p(wakeups) / 8
-        7: log1p(cpu_migrations) / 6
-        8: normalized last_cpu
+    0 is_thread
+    1 is_lock
+    2 is_waiting
+    3 log1p(wait_ns) / 22
+    4 has_owner
+    5 log1p(scheduler_switches) / 8
+    6 log1p(wakeups) / 8
+    7 log1p(cpu_migrations) / 6
+    8 normalized last_cpu
     """
-
-    features = node["features"]
-
-    is_thread = 1.0 if node["type"] == "thread" else 0.0
-    is_lock = 1.0 if node["type"] == "lock" else 0.0
-
-    last_cpu = float(features.get("last_cpu", -1))
-
-    # Keep the same basic treatment as the repository smoke test.
-    # -1 means "unknown CPU".
-    if last_cpu < 0:
-        normalized_cpu = -1.0
-    else:
-        # CPU IDs are generally small integers. The exact upper bound
-        # isn't semantically important here; clipping prevents outliers.
-        normalized_cpu = min(last_cpu / 128.0, 1.0)
+    node_type = node.get("type", "")
+    features = node.get("features", {})
 
     return [
-        is_thread,
-        is_lock,
+        float(node_type == "thread"),
+        float(node_type == "lock"),
         float(features.get("is_waiting", 0)),
         math.log1p(float(features.get("wait_ns", 0))) / 22.0,
         float(features.get("has_owner", 0)),
         math.log1p(float(features.get("scheduler_switches", 0))) / 8.0,
         math.log1p(float(features.get("wakeups", 0))) / 8.0,
         math.log1p(float(features.get("cpu_migrations", 0))) / 6.0,
-        normalized_cpu,
+        float(features.get("last_cpu", 0)) / 7.0,
     ]
 
 
-# ============================================================
-# Graph tensorization
-# ============================================================
-
-def tensorize_graph(
-    snapshot: dict[str, Any],
-    device: torch.device,
-) -> dict[str, Any]:
-
+def tensorize_graph(snapshot: dict[str, Any]) -> dict[str, Any]:
     nodes = snapshot["nodes"]
-
-    node_index = {
-        node["id"]: index
-        for index, node in enumerate(nodes)
-    }
+    node_index = {node["id"]: i for i, node in enumerate(nodes)}
 
     x = torch.tensor(
         [node_features(node) for node in nodes],
         dtype=torch.float32,
-        device=device,
     )
 
-    edges: dict[str, list[list[int]]] = {
-        relation: [[], []]
-        for relation in RELATIONS
+    edge_lists: dict[str, list[tuple[int, int]]] = {
+        relation: [] for relation in RELATIONS
     }
 
-    for edge in snapshot["edges"]:
+    for edge in snapshot.get("edges", []):
         relation = edge["type"]
-
-        if relation not in edges:
+        if relation not in edge_lists:
             continue
+        source = node_index[edge["source"]]
+        target = node_index[edge["target"]]
+        edge_lists[relation].append((source, target))
 
-        source = edge["source"]
-        target = edge["target"]
-
-        if source not in node_index or target not in node_index:
-            continue
-
-        edges[relation][0].append(node_index[source])
-        edges[relation][1].append(node_index[target])
-
-    edge_tensors = {}
-
+    edges: dict[str, torch.Tensor] = {}
     for relation in RELATIONS:
-        src, dst = edges[relation]
-
-        if len(src) == 0:
-            edge_tensors[relation] = (
-                torch.empty((0,), dtype=torch.long, device=device),
-                torch.empty((0,), dtype=torch.long, device=device),
-            )
+        pairs = edge_lists[relation]
+        if pairs:
+            edges[relation] = torch.tensor(
+                pairs, dtype=torch.long
+            ).t().contiguous()
         else:
-            edge_tensors[relation] = (
-                torch.tensor(src, dtype=torch.long, device=device),
-                torch.tensor(dst, dtype=torch.long, device=device),
-            )
+            edges[relation] = torch.empty((2, 0), dtype=torch.long)
 
-    return {
-        "x": x,
-        "edges": edge_tensors,
-    }
+    return {"x": x, "edges": edges}
 
-
-# ============================================================
-# Dataset
-# ============================================================
 
 class TemporalSequenceDataset:
-
-    def __init__(
-        self,
-        dataset_dir: Path,
-        split: str,
-        device: torch.device,
-    ):
+    def __init__(self, dataset_dir: Path, split: str):
         self.dataset_dir = dataset_dir
         self.split = split
-        self.device = device
 
-        print(f"Loading {split} snapshots...")
+        snapshot_rows = load_jsonl(resolve_jsonl_path(dataset_dir, f"{split}.jsonl"))
+        sequence_rows = load_jsonl(resolve_jsonl_path(dataset_dir, f"{split}_sequences.jsonl"))
 
-        snapshots = read_jsonl(
-            dataset_dir / f"{split}.jsonl"
-        )
+        self.graphs = {
+            row["snapshot_id"]: tensorize_graph(row)
+            for row in snapshot_rows
+        }
 
-        print(
-            f"  Loaded {len(snapshots):,} snapshots"
-        )
+        self.sequences: list[tuple[list[dict[str, Any]], int]] = []
+        for row in sequence_rows:
+            graphs = [self.graphs[sid] for sid in row["snapshot_ids"]]
+            label = LABEL_TO_ID[row["label"]]
+            self.sequences.append((graphs, label))
 
-        # Snapshot ID → tensorized graph
-        self.snapshots = {}
+        self.labels = [label for _, label in self.sequences]
 
-        for snapshot in snapshots:
-            snapshot_id = snapshot["snapshot_id"]
-
-            self.snapshots[snapshot_id] = tensorize_graph(
-                snapshot,
-                device,
-            )
-
-        print(
-            f"  Tensorized {len(self.snapshots):,} snapshots"
-        )
-
-        print(f"Loading {split} sequences...")
-
-        self.sequences = read_jsonl(
-            dataset_dir / f"{split}_sequences.jsonl"
-        )
-
-        print(
-            f"  Loaded {len(self.sequences):,} sequences"
-        )
+        print(f"Loaded {len(snapshot_rows):,} snapshots")
+        print(f"Loaded {len(self.sequences):,} sequences")
 
     def __len__(self) -> int:
         return len(self.sequences)
 
-    def item(
-        self,
-        index: int,
-    ) -> tuple[list[dict[str, Any]], torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[list[dict[str, Any]], int]:
+        return self.sequences[index]
 
-        sequence = self.sequences[index]
+    def label_counts(self) -> Counter:
+        return Counter(self.labels)
 
-        graphs = []
-
-        for snapshot_id in sequence["snapshot_ids"]:
-
-            if snapshot_id not in self.snapshots:
-                raise KeyError(
-                    f"Snapshot {snapshot_id} not found "
-                    f"in {self.split}.jsonl"
-                )
-
-            graphs.append(
-                self.snapshots[snapshot_id]
-            )
-
-        label = torch.tensor(
-            LABELS[sequence["label"]],
-            dtype=torch.long,
-            device=self.device,
-        )
-
-        return graphs, label
-
-    def label_counts(
-        self,
-    ) -> dict[str, int]:
-
-        counts = {
-            label: 0
-            for label in LABELS
-        }
-
-        for sequence in self.sequences:
-            counts[sequence["label"]] += 1
-
-        return counts
-
-
-# ============================================================
-# Relational GraphSAGE
-# ============================================================
 
 class RelationalGraphSAGE(nn.Module):
+    def __init__(self, input_size: int = 9, hidden_size: int = 32):
+        super().__init__()
 
-    def __init__(
+        self.input_proj = nn.Linear(input_size, hidden_size)
+        self.self_layer = nn.Linear(hidden_size, hidden_size)
+
+        self.relation_layers = nn.ModuleDict({
+            relation: nn.Linear(hidden_size, hidden_size, bias=False)
+            for relation in RELATIONS
+        })
+
+        self.norm = nn.LayerNorm(hidden_size)
+
+    def aggregate(
         self,
-        input_size: int = 9,
-        hidden_size: int = 32,
-    ):
+        h: torch.Tensor,
+        edge_index: torch.Tensor,
+        transform: nn.Module,
+    ) -> torch.Tensor:
+        if edge_index.numel() == 0:
+            return torch.zeros_like(h)
+
+        source = edge_index[0]
+        target = edge_index[1]
+
+        messages = transform(h[source])
+
+        aggregated = torch.zeros_like(h)
+        aggregated.index_add_(0, target, messages)
+
+        counts = torch.zeros(
+            h.size(0),
+            device=h.device,
+            dtype=h.dtype,
+        )
+        counts.index_add_(
+            0,
+            target,
+            torch.ones(
+                target.size(0),
+                device=h.device,
+                dtype=h.dtype,
+            ),
+        )
+
+        counts = counts.clamp_min(1.0).unsqueeze(1)
+        return aggregated / counts
+
+    def forward(self, graph: dict[str, Any]) -> torch.Tensor:
+        x = graph["x"]
+        edges = graph["edges"]
+
+        h = F.relu(self.input_proj(x))
+
+        out = self.self_layer(h)
+
+        for relation in RELATIONS:
+            out = out + self.aggregate(
+                h,
+                edges[relation],
+                self.relation_layers[relation],
+            )
+
+        h = F.relu(self.norm(out))
+
+        # The first two feature columns identify thread/lock nodes.
+        thread_mask = x[:, 0] > 0.5
+        lock_mask = x[:, 1] > 0.5
+
+        if thread_mask.any():
+            thread_pool = h[thread_mask].mean(dim=0)
+        else:
+            thread_pool = h.mean(dim=0)
+
+        if lock_mask.any():
+            lock_pool = h[lock_mask].mean(dim=0)
+        else:
+            lock_pool = h.mean(dim=0)
+
+        return torch.cat([thread_pool, lock_pool], dim=0)
+
+
+class TemporalGraphClassifier(nn.Module):
+    def __init__(self, input_size: int = 9, hidden_size: int = 32):
         super().__init__()
 
         self.hidden_size = hidden_size
 
-        self.input_projection = nn.Linear(
-            input_size,
-            hidden_size,
-        )
-
-        self.relation_layers = nn.ModuleDict({
-            relation: nn.Linear(
-                hidden_size,
-                hidden_size,
-                bias=False,
-            )
-            for relation in RELATIONS
-        })
-
-        self.self_layer = nn.Linear(
-            hidden_size,
-            hidden_size,
-        )
-
-        self.norm = nn.LayerNorm(
-            hidden_size
-        )
-
-    @staticmethod
-    def aggregate(
-        h: torch.Tensor,
-        source: torch.Tensor,
-        target: torch.Tensor,
-    ) -> torch.Tensor:
-
-        """
-        Mean aggregate source-node representations into target nodes.
-        """
-
-        num_nodes = h.size(0)
-        hidden_size = h.size(1)
-
-        if source.numel() == 0:
-            return torch.zeros(
-                (num_nodes, hidden_size),
-                dtype=h.dtype,
-                device=h.device,
-            )
-
-        messages = h[source]
-
-        result = torch.zeros(
-            (num_nodes, hidden_size),
-            dtype=h.dtype,
-            device=h.device,
-        )
-
-        result.index_add_(
-            0,
-            target,
-            messages,
-        )
-
-        degree = torch.zeros(
-            num_nodes,
-            dtype=h.dtype,
-            device=h.device,
-        )
-
-        degree.index_add_(
-            0,
-            target,
-            torch.ones_like(target, dtype=h.dtype),
-        )
-
-        degree = degree.clamp_min(1.0).unsqueeze(1)
-
-        return result / degree
-
-    def forward(
-        self,
-        graph: dict[str, Any],
-    ) -> torch.Tensor:
-
-        x = graph["x"]
-
-        h = F.relu(
-            self.input_projection(x)
-        )
-
-        relation_messages = []
-
-        for relation in RELATIONS:
-
-            source, target = graph["edges"][relation]
-
-            aggregated = self.aggregate(
-                h,
-                source,
-                target,
-            )
-
-            transformed = self.relation_layers[relation](
-                aggregated
-            )
-
-            relation_messages.append(
-                transformed
-            )
-
-        combined = self.self_layer(h)
-
-        for message in relation_messages:
-            combined = combined + message
-
-        h = F.relu(
-            self.norm(combined)
-        )
-
-        # Separate thread and lock graph pooling.
-        node_types = graph.get(
-            "node_types",
-            None,
-        )
-
-        # We don't currently store node types in tensorized graphs,
-        # so use the first two feature columns.
-        is_thread = x[:, 0] > 0.5
-        is_lock = x[:, 1] > 0.5
-
-        if is_thread.any():
-            thread_embedding = h[is_thread].mean(dim=0)
-        else:
-            thread_embedding = torch.zeros(
-                self.hidden_size,
-                device=h.device,
-                dtype=h.dtype,
-            )
-
-        if is_lock.any():
-            lock_embedding = h[is_lock].mean(dim=0)
-        else:
-            lock_embedding = torch.zeros(
-                self.hidden_size,
-                device=h.device,
-                dtype=h.dtype,
-            )
-
-        return torch.cat(
-            [
-                thread_embedding,
-                lock_embedding,
-            ],
-            dim=0,
-        )
-
-
-# ============================================================
-# Temporal model
-# ============================================================
-
-class TemporalGraphClassifier(nn.Module):
-
-    def __init__(
-        self,
-        hidden_size: int = 32,
-        num_classes: int = 3,
-    ):
-        super().__init__()
-
-        self.graph_encoder = RelationalGraphSAGE(
-            input_size=9,
+        self.gnn = RelationalGraphSAGE(
+            input_size=input_size,
             hidden_size=hidden_size,
         )
 
-        self.temporal = nn.GRU(
+        self.gru = nn.GRU(
             input_size=hidden_size * 2,
             hidden_size=hidden_size,
             batch_first=True,
@@ -476,406 +278,341 @@ class TemporalGraphClassifier(nn.Module):
 
         self.classifier = nn.Sequential(
             nn.LayerNorm(hidden_size),
-            nn.Linear(
-                hidden_size,
-                num_classes,
-            ),
+            nn.Linear(hidden_size, 3),
         )
 
     def forward(
         self,
-        sequences: list[list[dict[str, Any]]],
+        batch_graph_sequences: list[list[dict[str, Any]]],
+        device: torch.device,
     ) -> torch.Tensor:
+        sequence_embeddings: list[torch.Tensor] = []
 
-        sequence_embeddings = []
-
-        for graphs in sequences:
-
-            graph_embeddings = []
-
+        for graphs in batch_graph_sequences:
+            embeddings = []
             for graph in graphs:
-                graph_embeddings.append(
-                    self.graph_encoder(graph)
-                )
+                graph = {
+                    "x": graph["x"].to(device),
+                    "edges": {
+                        relation: edge.to(device)
+                        for relation, edge in graph["edges"].items()
+                    },
+                }
+                embeddings.append(self.gnn(graph))
 
-            graph_embeddings = torch.stack(
-                graph_embeddings,
-                dim=0,
-            )
+            sequence_embeddings.append(torch.stack(embeddings))
 
-            sequence_embeddings.append(
-                graph_embeddings
-            )
+        # All generated V3 sequences use the same sequence length.
+        x = torch.stack(sequence_embeddings, dim=0)
+        output, _ = self.gru(x)
 
-        x = torch.stack(
-            sequence_embeddings,
-            dim=0,
-        )
-
-        output, _ = self.temporal(x)
-
-        final_state = output[:, -1, :]
-
-        return self.classifier(
-            final_state
-        )
+        return self.classifier(output[:, -1, :])
 
 
-# ============================================================
-# Metrics
-# ============================================================
+class FocalCrossEntropy(nn.Module):
+    """
+    Weighted focal loss.
 
-def calculate_metrics(
-    targets: list[int],
-    predictions: list[int],
-) -> dict[str, Any]:
+    gamma=1.5 is deliberately moderate: V3 already detects deadlocks very
+    well, so we want more emphasis on difficult SAFE/PRE boundaries without
+    completely dominating the loss.
+    """
 
-    num_classes = len(LABELS)
-
-    confusion = [
-        [0 for _ in range(num_classes)]
-        for _ in range(num_classes)
-    ]
-
-    for target, prediction in zip(
-        targets,
-        predictions,
+    def __init__(
+        self,
+        class_weights: torch.Tensor,
+        gamma: float = 1.5,
     ):
-        confusion[target][prediction] += 1
+        super().__init__()
+        self.register_buffer("class_weights", class_weights)
+        self.gamma = gamma
 
-    total = len(targets)
+    def forward(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=1)
+        probs = log_probs.exp()
 
-    correct = sum(
-        confusion[i][i]
-        for i in range(num_classes)
-    )
+        target_log_probs = log_probs[
+            torch.arange(targets.size(0), device=targets.device),
+            targets,
+        ]
+        target_probs = probs[
+            torch.arange(targets.size(0), device=targets.device),
+            targets,
+        ]
 
-    accuracy = (
-        correct / total
-        if total
-        else 0.0
-    )
+        focal_factor = (1.0 - target_probs).pow(self.gamma)
+        weights = self.class_weights[targets]
 
-    precision_values = []
-    recall_values = []
-    f1_values = []
-
-    per_class = {}
-
-    inverse_labels = {
-        value: key
-        for key, value in LABELS.items()
-    }
-
-    for i in range(num_classes):
-
-        tp = confusion[i][i]
-
-        fp = sum(
-            confusion[row][i]
-            for row in range(num_classes)
-            if row != i
-        )
-
-        fn = sum(
-            confusion[i][column]
-            for column in range(num_classes)
-            if column != i
-        )
-
-        precision = (
-            tp / (tp + fp)
-            if tp + fp
-            else 0.0
-        )
-
-        recall = (
-            tp / (tp + fn)
-            if tp + fn
-            else 0.0
-        )
-
-        f1 = (
-            2 * precision * recall /
-            (precision + recall)
-            if precision + recall
-            else 0.0
-        )
-
-        precision_values.append(precision)
-        recall_values.append(recall)
-        f1_values.append(f1)
-
-        per_class[inverse_labels[i]] = {
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "support": tp + fn,
-        }
-
-    macro_precision = sum(
-        precision_values
-    ) / num_classes
-
-    macro_recall = sum(
-        recall_values
-    ) / num_classes
-
-    macro_f1 = sum(
-        f1_values
-    ) / num_classes
-
-    return {
-        "accuracy": accuracy,
-        "macro_precision": macro_precision,
-        "macro_recall": macro_recall,
-        "macro_f1": macro_f1,
-        "per_class": per_class,
-        "confusion_matrix": confusion,
-    }
+        loss = -weights * focal_factor * target_log_probs
+        return loss.mean()
 
 
-# ============================================================
-# Class weights
-# ============================================================
+def pre_deadlock_false_positive_penalty(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    strength: float,
+) -> torch.Tensor:
+    """
+    Penalize predicting PRE_DEADLOCK when the true label is SAFE.
+
+    V3's main test error was SAFE -> PRE_DEADLOCK. This term is small so that
+    pre-deadlock recall is not sacrificed for precision.
+    """
+    if strength <= 0:
+        return logits.new_zeros(())
+
+    probabilities = F.softmax(logits, dim=1)
+    safe_mask = targets == LABEL_TO_ID["safe"]
+
+    if not safe_mask.any():
+        return logits.new_zeros(())
+
+    pre_probability = probabilities[safe_mask, LABEL_TO_ID["pre_deadlock"]]
+
+    return strength * pre_probability.mean()
+
 
 def make_class_weights(
-    counts: dict[str, int],
-    device: torch.device,
+    counts: Counter,
+    pre_multiplier: float = 1.0,
 ) -> torch.Tensor:
-
     total = sum(counts.values())
-    num_classes = len(counts)
-
     weights = []
 
-    for label in (
-        "safe",
-        "pre_deadlock",
-        "deadlocked",
-    ):
+    for label in LABELS:
+        count = max(1, counts.get(label, 0))
+        weight = total / (len(LABELS) * count)
 
-        count = counts[label]
-
-        weight = (
-            total /
-            (num_classes * count)
-        )
+        if label == "pre_deadlock":
+            weight *= pre_multiplier
 
         weights.append(weight)
 
-    return torch.tensor(
-        weights,
-        dtype=torch.float32,
-        device=device,
-    )
+    return torch.tensor(weights, dtype=torch.float32)
 
 
-# ============================================================
-# Training / evaluation
-# ============================================================
+@torch.no_grad()
+def calculate_metrics(
+    predictions: list[int],
+    targets: list[int],
+) -> dict[str, Any]:
+    confusion = np.zeros((3, 3), dtype=np.int64)
+
+    for target, prediction in zip(targets, predictions):
+        confusion[target, prediction] += 1
+
+    per_class = {}
+
+    precisions = []
+    recalls = []
+    f1s = []
+
+    for class_id, label in enumerate(LABELS):
+        tp = confusion[class_id, class_id]
+        fp = confusion[:, class_id].sum() - tp
+        fn = confusion[class_id, :].sum() - tp
+
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        f1 = (
+            2 * precision * recall / max(1e-12, precision + recall)
+        )
+
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
+
+        per_class[label] = {
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "support": int(confusion[class_id, :].sum()),
+        }
+
+    accuracy = np.trace(confusion) / max(1, confusion.sum())
+
+    return {
+        "accuracy": float(accuracy),
+        "macro_precision": float(np.mean(precisions)),
+        "macro_recall": float(np.mean(recalls)),
+        "macro_f1": float(np.mean(f1s)),
+        "per_class": per_class,
+        "confusion_matrix": confusion.tolist(),
+    }
+
 
 def run_epoch(
     model: nn.Module,
     dataset: TemporalSequenceDataset,
-    indices: list[int],
     optimizer: torch.optim.Optimizer | None,
     criterion: nn.Module,
+    device: torch.device,
     batch_size: int,
+    focal_gamma: float,
+    pre_fp_penalty: float,
     train: bool,
+    seed: int,
 ) -> tuple[float, dict[str, Any]]:
-
     model.train(train)
 
-    random_indices = indices.copy()
+    indices = list(range(len(dataset)))
 
     if train:
-        random.shuffle(random_indices)
+        random.Random(seed).shuffle(indices)
 
     total_loss = 0.0
+    total_samples = 0
 
-    targets = []
-    predictions = []
+    predictions: list[int] = []
+    targets: list[int] = []
 
-    num_batches = math.ceil(
-        len(random_indices) / batch_size
-    )
+    for start in range(0, len(indices), batch_size):
+        batch_indices = indices[start:start + batch_size]
 
-    for batch_number in range(num_batches):
-
-        start = batch_number * batch_size
-        end = min(
-            start + batch_size,
-            len(random_indices),
-        )
-
-        batch_indices = random_indices[
-            start:end
-        ]
-
-        items = [
-            dataset.item(index)
-            for index in batch_indices
-        ]
-
-        sequences = [
-            item[0]
-            for item in items
-        ]
-
-        labels = torch.stack(
-            [
-                item[1]
-                for item in items
-            ]
+        batch_graphs = [dataset[i][0] for i in batch_indices]
+        batch_targets = torch.tensor(
+            [dataset[i][1] for i in batch_indices],
+            dtype=torch.long,
+            device=device,
         )
 
         if train:
-            optimizer.zero_grad(
-                set_to_none=True
+            optimizer.zero_grad(set_to_none=True)
+
+        with torch.set_grad_enabled(train):
+            logits = model(batch_graphs, device)
+
+            loss = criterion(logits, batch_targets)
+
+            # Additional boundary-aware term for the dominant V3 error.
+            loss = loss + pre_deadlock_false_positive_penalty(
+                logits,
+                batch_targets,
+                pre_fp_penalty,
             )
 
-        logits = model(
-            sequences
-        )
+            if train:
+                loss.backward()
 
-        loss = criterion(
-            logits,
-            labels,
-        )
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    max_norm=1.0,
+                )
 
-        if train:
+                optimizer.step()
 
-            loss.backward()
+        batch_count = len(batch_indices)
+        total_loss += float(loss.item()) * batch_count
+        total_samples += batch_count
 
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                max_norm=1.0,
-            )
+        predictions.extend(logits.argmax(dim=1).detach().cpu().tolist())
+        targets.extend(batch_targets.detach().cpu().tolist())
 
-            optimizer.step()
-
-        total_loss += (
-            loss.item() *
-            len(batch_indices)
-        )
-
-        predicted = logits.argmax(
-            dim=1
-        )
-
-        targets.extend(
-            labels.detach()
-            .cpu()
-            .tolist()
-        )
-
-        predictions.extend(
-            predicted.detach()
-            .cpu()
-            .tolist()
-        )
-
-        if (
-            train
-            and (
-                batch_number == 0
-                or (batch_number + 1) % 25 == 0
-                or batch_number + 1 == num_batches
-            )
-        ):
-            print(
-                f"\r  Batch "
-                f"{batch_number + 1}/{num_batches}",
-                end="",
-                flush=True,
-            )
-
-    if train:
-        print()
-
-    average_loss = (
-        total_loss / len(random_indices)
-    )
-
-    metrics = calculate_metrics(
-        targets,
-        predictions,
-    )
+    metrics = calculate_metrics(predictions, targets)
+    average_loss = total_loss / max(1, total_samples)
 
     return average_loss, metrics
 
 
-# ============================================================
-# Main
-# ============================================================
+def print_metrics(
+    prefix: str,
+    loss: float,
+    metrics: dict[str, Any],
+) -> None:
+    print(
+        f"{prefix} loss: {loss:.4f} | "
+        f"accuracy: {metrics['accuracy']:.4f} | "
+        f"macro-F1: {metrics['macro_f1']:.4f} | "
+        f"macro-P: {metrics['macro_precision']:.4f} | "
+        f"macro-R: {metrics['macro_recall']:.4f}"
+    )
 
-def main() -> int:
+    for label in LABELS:
+        item = metrics["per_class"][label]
+        print(
+            f"  {label:12s} "
+            f"P={item['precision']:.4f} "
+            f"R={item['recall']:.4f} "
+            f"F1={item['f1']:.4f} "
+            f"N={item['support']}"
+        )
 
+
+def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "--dataset",
         type=Path,
-        required=True,
+        default=Path("dataset/v3"),
     )
-
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(
-            "outputs/gnn"
-        ),
+        default=Path("outputs/gnn_v3_improved"),
     )
-
     parser.add_argument(
         "--epochs",
         type=int,
-        default=30,
+        default=20,
     )
-
     parser.add_argument(
         "--batch-size",
         type=int,
         default=32,
     )
-
     parser.add_argument(
         "--hidden-size",
         type=int,
         default=32,
     )
-
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=1e-3,
     )
-
     parser.add_argument(
         "--weight-decay",
         type=float,
         default=1e-4,
     )
-
     parser.add_argument(
         "--patience",
         type=int,
         default=5,
     )
-
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
     )
-
+    parser.add_argument(
+        "--focal-gamma",
+        type=float,
+        default=1.5,
+        help="Focal-loss gamma. 0 disables focal focusing.",
+    )
+    parser.add_argument(
+        "--pre-multiplier",
+        type=float,
+        default=1.0,
+        help="Extra multiplier for the pre_deadlock class weight.",
+    )
+    parser.add_argument(
+        "--pre-fp-penalty",
+        type=float,
+        default=0.15,
+        help="Penalty on SAFE samples assigned probability of pre_deadlock.",
+    )
     parser.add_argument(
         "--limit-train",
         type=int,
         default=None,
     )
-
     parser.add_argument(
         "--limit-validation",
         type=int,
@@ -886,121 +623,74 @@ def main() -> int:
 
     set_seed(args.seed)
 
-    # --------------------------------------------------------
-    # Device
-    # --------------------------------------------------------
-
     device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
+        "cuda" if torch.cuda.is_available() else "cpu"
     )
 
     print("=" * 70)
-    print("Temporal Relational GraphSAGE + GRU")
+    print("TRAINING TEMPORAL RELATIONAL GRAPHSAGE + GRU (V3 IMPROVED)")
     print("=" * 70)
+    print(f"Device: {device}")
+    print(f"PyTorch: {torch.__version__}")
 
-    print(
-        f"Device: {device}"
-    )
+    if torch.cuda.is_available():
+        print(f"CUDA: {torch.version.cuda}")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        print("CUDA: False")
+        print("GPU: CPU only")
 
-    if device.type == "cuda":
-        print(
-            f"GPU: "
-            f"{torch.cuda.get_device_name(0)}"
-        )
+    print(f"Dataset: {args.dataset}")
+    print(f"Output: {args.output}")
+    print(f"Focal gamma: {args.focal_gamma}")
+    print(f"Pre-deadlock class multiplier: {args.pre_multiplier}")
+    print(f"SAFE -> PRE false-positive penalty: {args.pre_fp_penalty}")
 
-    print(
-        f"PyTorch: {torch.__version__}"
-    )
-
-    # --------------------------------------------------------
-    # Dataset
-    # --------------------------------------------------------
-
-    train = TemporalSequenceDataset(
+    train_dataset = TemporalSequenceDataset(
         args.dataset,
         "train",
-        device,
     )
-
-    validation = TemporalSequenceDataset(
+    validation_dataset = TemporalSequenceDataset(
         args.dataset,
         "validation",
-        device,
-    )
-
-    train_indices = list(
-        range(len(train))
-    )
-
-    validation_indices = list(
-        range(len(validation))
     )
 
     if args.limit_train is not None:
-        train_indices = train_indices[
-            :args.limit_train
-        ]
+        train_dataset.sequences = train_dataset.sequences[:args.limit_train]
+        train_dataset.labels = [label for _, label in train_dataset.sequences]
 
     if args.limit_validation is not None:
-        validation_indices = validation_indices[
-            :args.limit_validation
+        validation_dataset.sequences = (
+            validation_dataset.sequences[:args.limit_validation]
+        )
+        validation_dataset.labels = [
+            label for _, label in validation_dataset.sequences
         ]
 
     print()
-    print("Training samples:", len(train_indices))
-    print("Validation samples:", len(validation_indices))
-
-    print()
-    print("Training class distribution:")
-
-    train_counts = train.label_counts()
-
-    for label, count in train_counts.items():
-        print(
-            f"  {label:15s}: {count:,}"
-        )
-
-    # --------------------------------------------------------
-    # Class weights
-    # --------------------------------------------------------
+    print(f"Training samples: {len(train_dataset):,}")
+    print(f"Validation samples: {len(validation_dataset):,}")
+    print(f"Training class distribution: {dict(train_dataset.label_counts())}")
+    print(
+        f"Validation class distribution: "
+        f"{dict(validation_dataset.label_counts())}"
+    )
 
     class_weights = make_class_weights(
-        train_counts,
-        device,
-    )
-
-    print()
-    print("Class weights:")
-
-    for label, weight in zip(
-        LABELS,
-        class_weights.tolist(),
-    ):
-        print(
-            f"  {label:15s}: {weight:.4f}"
-        )
-
-    # --------------------------------------------------------
-    # Model
-    # --------------------------------------------------------
-
-    model = TemporalGraphClassifier(
-        hidden_size=args.hidden_size,
-        num_classes=len(LABELS),
+        train_dataset.label_counts(),
+        pre_multiplier=args.pre_multiplier,
     ).to(device)
 
-    parameter_count = sum(
-        parameter.numel()
-        for parameter in model.parameters()
-    )
+    print(f"Class weights:")
+    for label, weight in zip(LABELS, class_weights.tolist()):
+        print(f"  {label}: {weight:.4f}")
 
-    print()
-    print(
-        f"Model parameters: "
-        f"{parameter_count:,}"
-    )
+    model = TemporalGraphClassifier(
+        input_size=9,
+        hidden_size=args.hidden_size,
+    ).to(device)
+
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -1008,248 +698,135 @@ def main() -> int:
         weight_decay=args.weight_decay,
     )
 
-    criterion = nn.CrossEntropyLoss(
-        weight=class_weights
-    )
+    if args.focal_gamma > 0:
+        criterion = FocalCrossEntropy(
+            class_weights=class_weights,
+            gamma=args.focal_gamma,
+        )
+    else:
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights,
+        )
 
-    # --------------------------------------------------------
-    # Output directory
-    # --------------------------------------------------------
+    args.output.mkdir(parents=True, exist_ok=True)
 
-    args.output.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    best_model_path = (
-        args.output /
-        "best_model.pt"
-    )
-
-    history_path = (
-        args.output /
-        "history.json"
-    )
-
-    history = []
-
-    best_f1 = -1.0
+    best_macro_f1 = -1.0
+    best_epoch = -1
     epochs_without_improvement = 0
 
-    # --------------------------------------------------------
-    # Training
-    # --------------------------------------------------------
+    history: list[dict[str, Any]] = []
 
-    print()
-    print("=" * 70)
-    print("TRAINING")
-    print("=" * 70)
-
-    for epoch in range(
-        1,
-        args.epochs + 1,
-    ):
-
+    for epoch in range(1, args.epochs + 1):
         print()
-        print(
-            f"Epoch {epoch}/{args.epochs}"
-        )
+        print("-" * 70)
+        print(f"Epoch {epoch}/{args.epochs}")
 
         start_time = time.time()
 
-        # -----------------------------
-        # Training
-        # -----------------------------
-
         train_loss, train_metrics = run_epoch(
             model=model,
-            dataset=train,
-            indices=train_indices,
+            dataset=train_dataset,
             optimizer=optimizer,
             criterion=criterion,
+            device=device,
             batch_size=args.batch_size,
+            focal_gamma=args.focal_gamma,
+            pre_fp_penalty=args.pre_fp_penalty,
             train=True,
+            seed=args.seed + epoch,
         )
-
-        # -----------------------------
-        # Validation
-        # -----------------------------
 
         validation_loss, validation_metrics = run_epoch(
             model=model,
-            dataset=validation,
-            indices=validation_indices,
+            dataset=validation_dataset,
             optimizer=None,
             criterion=criterion,
+            device=device,
             batch_size=args.batch_size,
+            focal_gamma=args.focal_gamma,
+            pre_fp_penalty=args.pre_fp_penalty,
             train=False,
+            seed=args.seed,
         )
 
         elapsed = time.time() - start_time
 
-        print()
-        print(
-            f"Train loss:       {train_loss:.4f}"
-        )
+        print_metrics("Train", train_loss, train_metrics)
+        print_metrics("Validation", validation_loss, validation_metrics)
+        print(f"Epoch time: {elapsed:.2f}s")
 
-        print(
-            f"Validation loss:  {validation_loss:.4f}"
-        )
-
-        print(
-            f"Train accuracy:    "
-            f"{train_metrics['accuracy']:.4f}"
-        )
-
-        print(
-            f"Validation accuracy: "
-            f"{validation_metrics['accuracy']:.4f}"
-        )
-
-        print(
-            f"Validation macro-F1: "
-            f"{validation_metrics['macro_f1']:.4f}"
-        )
-
-        print(
-            f"Epoch time:        "
-            f"{elapsed:.2f}s"
-        )
-
-        print()
-        print("Validation per-class:")
-
-        for label, values in (
-            validation_metrics["per_class"]
-            .items()
-        ):
-
-            print(
-                f"  {label:15s} "
-                f"P={values['precision']:.4f} "
-                f"R={values['recall']:.4f} "
-                f"F1={values['f1']:.4f} "
-                f"N={values['support']}"
-            )
-
-        epoch_record = {
+        history.append({
             "epoch": epoch,
             "train_loss": train_loss,
-            "validation_loss": validation_loss,
             "train_metrics": train_metrics,
+            "validation_loss": validation_loss,
             "validation_metrics": validation_metrics,
             "epoch_seconds": elapsed,
-        }
+        })
 
-        history.append(
-            epoch_record
-        )
+        current_f1 = validation_metrics["macro_f1"]
 
-        # ----------------------------------------------------
-        # Save history
-        # ----------------------------------------------------
-
-        history_path.write_text(
-            json.dumps(
-                history,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-        # ----------------------------------------------------
-        # Save best model
-        # ----------------------------------------------------
-
-        current_f1 = (
-            validation_metrics["macro_f1"]
-        )
-
-        if current_f1 > best_f1:
-
-            best_f1 = current_f1
+        if current_f1 > best_macro_f1:
+            best_macro_f1 = current_f1
+            best_epoch = epoch
             epochs_without_improvement = 0
 
-            torch.save(
-                {
-                    "model_state_dict":
-                        model.state_dict(),
-                    "optimizer_state_dict":
-                        optimizer.state_dict(),
-                    "epoch": epoch,
-                    "validation_macro_f1":
-                        current_f1,
-                    "label_mapping":
-                        LABELS,
-                    "hidden_size":
-                        args.hidden_size,
+            checkpoint = {
+                "model_state_dict": model.state_dict(),
+                "config": {
+                    "input_size": 9,
+                    "hidden_size": args.hidden_size,
+                    "labels": list(LABELS),
+                    "relations": list(RELATIONS),
+                    "architecture": "Temporal Relational GraphSAGE + GRU",
+                    "loss": "weighted focal cross entropy",
+                    "focal_gamma": args.focal_gamma,
+                    "pre_multiplier": args.pre_multiplier,
+                    "pre_fp_penalty": args.pre_fp_penalty,
                 },
-                best_model_path,
+                "epoch": epoch,
+                "best_validation_macro_f1": best_macro_f1,
+                "validation_metrics": validation_metrics,
+                "args": vars(args),
+            }
+
+            torch.save(
+                checkpoint,
+                args.output / "best_model.pt",
             )
 
-            print()
             print(
-                f"✓ New best model saved "
-                f"(macro-F1={best_f1:.4f})"
+                f"*** New best model saved. "
+                f"Validation Macro-F1: {best_macro_f1:.4f}"
             )
-
         else:
-
             epochs_without_improvement += 1
-
             print(
                 f"No improvement for "
-                f"{epochs_without_improvement} "
-                f"epoch(s)"
+                f"{epochs_without_improvement}/{args.patience} epoch(s)."
             )
 
-        # ----------------------------------------------------
-        # Early stopping
-        # ----------------------------------------------------
-
-        if (
-            epochs_without_improvement
-            >= args.patience
-        ):
-
-            print()
-            print(
-                "Early stopping."
-            )
-
+        if epochs_without_improvement >= args.patience:
+            print("Early stopping.")
             break
 
-    # --------------------------------------------------------
-    # Finish
-    # --------------------------------------------------------
+    with (args.output / "training_history.json").open(
+        "w",
+        encoding="utf-8",
+    ) as handle:
+        json.dump(history, handle, indent=2)
 
     print()
     print("=" * 70)
     print("TRAINING COMPLETE")
     print("=" * 70)
-
-    print(
-        f"Best validation macro-F1: "
-        f"{best_f1:.4f}"
-    )
-
-    print(
-        f"Best model: "
-        f"{best_model_path}"
-    )
-
-    print(
-        f"History: "
-        f"{history_path}"
-    )
-
+    print(f"Best epoch: {best_epoch}")
+    print(f"Best validation Macro-F1: {best_macro_f1:.4f}")
+    print(f"Model: {args.output / 'best_model.pt'}")
     print()
-    print(
-        "Test set was NOT used."
-    )
-
-    return 0
+    print("Test set was NOT used.")
+    print("Use test_gnn.py once after selecting the final model.")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

@@ -1,0 +1,52 @@
+{
+  "model": "outputs\\gnn_v3_improved\\best_model.pt",
+  "dataset": "dataset\\v3",
+  "device": "cpu",
+  "input_size": 9,
+  "hidden_size": 32,
+  "focal_gamma": 1.5,
+  "pre_fp_penalty": 0.15,
+  "test_samples": 5549,
+  "test_loss": 0.4137610712122715,
+  "accuracy": 0.8390701027212111,
+  "macro_precision": 0.7746358528064802,
+  "macro_recall": 0.7085179596316215,
+  "macro_f1": 0.7162426591124383,
+  "per_class": {
+    "safe": {
+      "precision": 0.8299808429118773,
+      "recall": 0.9545579730101901,
+      "f1": 0.8879210964519022,
+      "support": 3631
+    },
+    "pre_deadlock": {
+      "precision": 0.5150602409638554,
+      "recall": 0.1958762886597938,
+      "f1": 0.2838174273858921,
+      "support": 873
+    },
+    "deadlocked": {
+      "precision": 0.978866474543708,
+      "recall": 0.9751196172248804,
+      "f1": 0.9769894534995206,
+      "support": 1045
+    }
+  },
+  "confusion_matrix": [
+    [
+      3466,
+      149,
+      16
+    ],
+    [
+      696,
+      171,
+      6
+    ],
+    [
+      14,
+      12,
+      1019
+    ]
+  ]
+}
