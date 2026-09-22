@@ -17,3 +17,21 @@ dataset/**/*.pt
 
 # Publish the complete validated v2 JSONL release through Git LFS.
 !dataset/v2/*.jsonl
+
+# ==============================
+# kernel_deadlock_prototype
+# ==============================
+
+# Runtime-generated event logs
+kernel_deadlock_prototype/snapshots/*-events.jsonl
+kernel_deadlock_prototype/snapshots/*-events.jsonl.gz
+
+# Runtime-generated graph sequences
+kernel_deadlock_prototype/snapshots/*-sequence.jsonl
+
+# Runtime-generated inspection snapshots
+kernel_deadlock_prototype/snapshots/*-snapshot.json
+
+# Any other temporary runtime output
+kernel_deadlock_prototype/snapshots/*.tmp
+kernel_deadlock_prototype/snapshots/*.log
