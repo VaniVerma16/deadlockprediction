@@ -19,8 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from deadlock_prototype.digital_twin import SynchronizationDigitalTwin
 from deadlock_prototype.events import RuntimeEvent
-from deadlockprediction.kernel_deadlock_prototype.experiments.ebpf_collector import EBPFCollector
-
+from ebpf_collector import EBPFCollector
 
 def snapshot_to_dict(snapshot):
     if hasattr(snapshot, "model_dump"):
@@ -39,23 +38,23 @@ def print_prediction(prediction: dict, snapshot: dict) -> None:
 
     print(
         f"P(deadlock): "
-        f"{prediction['p_deadlock']:.4f}"
+        f"{prediction['deadlock_probability']:.4f}"
     )
     print(
         f"P(pre-deadlock): "
-        f"{prediction['p_pre']:.4f}"
+        f"{prediction['pre_deadlock_probability']:.4f}"
     )
     print(
         f"Risk <=50ms: "
-        f"{prediction['risk_50']:.4f}"
+        f"{prediction['risk_50ms']:.4f}"
     )
     print(
         f"Risk <=100ms: "
-        f"{prediction['risk_100']:.4f}"
+        f"{prediction['risk_100ms']:.4f}"
     )
     print(
         f"Risk <=300ms: "
-        f"{prediction['risk_300']:.4f}"
+        f"{prediction['risk_300ms']:.4f}"
     )
 
     if prediction["state"] == "pre_deadlock":
@@ -72,7 +71,7 @@ def main() -> int:
 
     # Import after ROOT has been added so the existing V5 implementation
     # can be reused without modifying the trained checkpoint.
-    from deadlockprediction.kernel_deadlock_prototype.v5_inference import V5Inference
+    from v5_inference import V5Inference
 
     collector = EBPFCollector(pid=args.pid)
     twin = SynchronizationDigitalTwin()
@@ -116,7 +115,7 @@ def main() -> int:
                 # Existing V5Inference accepts the graph snapshot directly.
                 prediction = model.add_snapshot(snapshot_dict)
 
-                if prediction is not None:
+                if prediction is not None and prediction.get("ready", False):
                     print_prediction(
                         prediction,
                         snapshot_dict,

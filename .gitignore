@@ -35,3 +35,45 @@ kernel_deadlock_prototype/snapshots/*-snapshot.json
 # Any other temporary runtime output
 kernel_deadlock_prototype/snapshots/*.tmp
 kernel_deadlock_prototype/snapshots/*.log
+
+# ==============================
+# Frontend / Node.js
+# ==============================
+kernel_deadlock_prototype/frontend/dist/
+node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# ==============================
+# Python environment / tooling
+# ==============================
+
+*.log
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ==============================
+# IDE / editor files
+# ==============================
+
+.vscode/
+.idea/
+
+# ==============================
+# Python environment variables
+# ==============================
+
+.env
+.env.local
+.env.*.local
+!.env.example
