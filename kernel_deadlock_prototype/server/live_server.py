@@ -195,6 +195,8 @@ class MonitorLoop:
 
                 snapshot = self.twin.sample(snapshot_id)
                 graph_payload = snapshot_to_payload(snapshot)
+                if not graph_payload["nodes"]:
+                    continue
 
                 # V5Inference.add_snapshot expects the plain-dict graph
                 # contract (nodes/edges) — exactly what tensorize_graph
