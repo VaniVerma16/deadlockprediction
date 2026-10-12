@@ -54,6 +54,7 @@ import websockets  # pip install websockets
 from deadlock_prototype.digital_twin import SynchronizationDigitalTwin  # noqa: E402
 from ebpf_collector import EBPFCollector  # noqa: E402
 from v5_inference import V5Inference  # noqa: E402
+from deadlock_state import interpret_prediction  # noqa: E402
 
 
 SAMPLE_INTERVAL_S = 0.010  # 10 ms — matches the Digital Twin's verified interval
@@ -221,6 +222,7 @@ class MonitorLoop:
                         "events": list(self._recent_events),
                     }
                 else:
+                    interpreted = interpret_prediction(snapshot_dict, result)
                     message = {
                         "snapshot_id": graph_payload["snapshot_id"],
                         "ts_ns": graph_payload["ts_ns"],
@@ -230,7 +232,7 @@ class MonitorLoop:
                         },
                         "inference": {
                             "ready": True,
-                            "state": result["state"],
+                            **interpreted,
                             "deadlock_probability": result["deadlock_probability"],
                             "pre_deadlock_probability": result["pre_deadlock_probability"],
                             "risk_50ms": result["risk_50ms"],
