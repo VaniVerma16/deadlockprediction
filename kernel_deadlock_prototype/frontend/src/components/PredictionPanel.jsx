@@ -42,6 +42,13 @@ export default function PredictionPanel({ inference }) {
         {STATE_LABELS[stateKey] || stateKey}
       </div>
 
+      {inference.observed_cycle === true && (
+        <p className="threshold-note">Confirmed circular wait in the observed dependency graph.</p>
+      )}
+      {inference.observed_cycle === false && inference.model_state === "deadlocked" && (
+        <p className="threshold-note">High model-predicted deadlock risk; no dependency cycle confirmed yet.</p>
+      )}
+
       <div className="metric-row">
         <span>P(deadlock)</span>
         <span className="value">{pct(inference.deadlock_probability)}</span>
