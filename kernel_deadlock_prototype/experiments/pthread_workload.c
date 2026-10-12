@@ -145,8 +145,8 @@ void *deadlock_worker_b(void *arg)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2) {
-        printf("Usage: %s <safe|contention|deadlock>\n", argv[0]);
+    if (argc != 2 && !(argc == 3 && strcmp(argv[2], "--wait-start") == 0)) {
+        printf("Usage: %s <safe|contention|deadlock> [--wait-start]\n", argv[0]);
         return 1;
     }
 
@@ -168,6 +168,16 @@ int main(int argc, char *argv[])
     printf("========================================\n");
     fflush(stdout);
 
+
+    /* Keep libc mapped but emit no mutex events until the monitor is ready. */
+    if (argc == 3) {
+        puts("WORKLOAD_READY");
+        fflush(stdout);
+        if (getchar() != '\n') {
+            fprintf(stderr, "Start cancelled: launcher closed the input pipe.\n");
+            return 1;
+        }
+    }
 
     /* ---------------- SAFE ---------------- */
 
