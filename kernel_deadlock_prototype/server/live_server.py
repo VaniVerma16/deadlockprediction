@@ -42,9 +42,11 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+SERVER = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 EXPERIMENTS = ROOT / "experiments"
 
+sys.path.insert(0, str(SERVER))
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(EXPERIMENTS))
