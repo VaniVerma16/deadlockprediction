@@ -29,7 +29,9 @@ Run (same privilege pattern as the existing live_monitor.py):
 """
 
 from __future__ import annotations
-
+import csv
+import os
+import statistics
 import argparse
 import asyncio
 import json
@@ -131,6 +133,7 @@ class MonitorLoop:
         out_queue: "asyncio.Queue[str]",
         model_path: Path | None = None,
     ):
+        
         self.pid = pid
         self.loop = loop
         self.out_queue = out_queue
@@ -139,6 +142,16 @@ class MonitorLoop:
         self._stop = threading.Event()
         self._snapshot_counter = 0
         self._recent_events: deque = deque(maxlen=EVENT_LOG_MAXLEN)
+
+        self._metrics = []
+        self._run_start = time.perf_counter()
+        self._ready_predictions = 0
+        self._last_prediction_time = None
+        self._prediction_intervals = []
+        self._metric_mode = os.environ.get("DEADLOCK_WORKLOAD_MODE", "unspecified")
+
+        self._metrics_dir = ROOT / "outputs" / "live_metrics"
+        self._metrics_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"[monitor] attaching eBPF collector to PID={self.pid}")
         self.collector = EBPFCollector(pid=self.pid)
@@ -173,6 +186,32 @@ class MonitorLoop:
         # Thread-safe hand-off into the asyncio world.
         self.loop.call_soon_threadsafe(self.out_queue.put_nowait, payload)
 
+    def _save_metrics(self):
+        if not self._metrics:
+            print("[metrics] No ready predictions were recorded.")
+            return
+
+        filename = time.strftime("live_run_%Y%m%d_%H%M%S.csv")
+        output_path = self._metrics_dir / filename
+
+        fieldnames = list(self._metrics[0].keys())
+
+        with output_path.open("w", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self._metrics)
+
+        elapsed = max(time.perf_counter() - self._run_start, 1e-9)
+        latencies = [row["inference_latency_ms"] for row in self._metrics]
+
+        print(f"\n[metrics] Saved predictions to: {output_path}")
+        print(f"[metrics] Workload mode: {self._metric_mode}")
+        print(f"[metrics] Ready predictions: {len(self._metrics)}")
+        print(f"[metrics] Run duration: {elapsed:.3f} seconds")
+        print(f"[metrics] Prediction throughput: {len(self._metrics) / elapsed:.2f} predictions/second")
+        print(f"[metrics] Mean inference latency: {statistics.mean(latencies):.3f} ms")
+        print(f"[metrics] Median inference latency: {statistics.median(latencies):.3f} ms")
+        print(f"[metrics] Maximum inference latency: {max(latencies):.3f} ms")
     def run(self) -> None:
         print(f"[monitor] sampling every {SAMPLE_INTERVAL_S * 1000:.0f} ms")
         next_sample_at = time.monotonic()
@@ -196,6 +235,7 @@ class MonitorLoop:
                 self._snapshot_counter += 1
                 snapshot_id = f"live-{self._snapshot_counter:06d}"
 
+                sample_start = time.perf_counter()
                 snapshot = self.twin.sample(snapshot_id)
                 graph_payload = snapshot_to_payload(snapshot)
                 if not graph_payload["nodes"]:
@@ -208,8 +248,34 @@ class MonitorLoop:
                     "nodes": graph_payload["nodes"],
                     "edges": graph_payload["edges"],
                 }
+                inference_start = time.perf_counter()
                 result = self.model.add_snapshot(snapshot_dict)
+                inference_end = time.perf_counter()
 
+                inference_latency_ms = (inference_end - inference_start) * 1000
+                sample_to_prediction_ms = (inference_end - sample_start) * 1000
+                if result.get("ready", False):
+                    self._ready_predictions += 1
+                    elapsed_seconds = time.perf_counter() - self._run_start
+
+                    self._metrics.append({
+                    "workload_mode": self._metric_mode,
+                    "snapshot_id": graph_payload["snapshot_id"],
+                    "ts_ns": graph_payload["ts_ns"],
+                    "elapsed_seconds": round(elapsed_seconds, 6),
+                    "predicted_state": result["state"],
+                    "deadlock_probability": result["deadlock_probability"],
+                    "pre_deadlock_probability": result["pre_deadlock_probability"],
+                    "risk_50ms": result["risk_50ms"],
+                    "risk_100ms": result["risk_100ms"],
+                    "risk_300ms": result["risk_300ms"],
+                    "inference_latency_ms": round(inference_latency_ms, 6),
+                    "sample_to_prediction_ms": round(sample_to_prediction_ms, 6),
+                    "predictions_so_far": self._ready_predictions,
+                    "average_throughput_so_far": round(
+                        self._ready_predictions / max(elapsed_seconds, 1e-9), 6
+                    ),
+                })
                 if not result.get("ready", False):
                     # Still warming up (< 8 snapshots). Per spec, do not
                     # invent predictions during warm-up.
@@ -250,6 +316,7 @@ class MonitorLoop:
         except KeyboardInterrupt:
             pass
         finally:
+            self._save_metrics()
             print("[monitor] stopped")
 
 

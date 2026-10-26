@@ -71,6 +71,7 @@ def main():
         wait_for(workload, workload_messages, lambda s: s == "WORKLOAD_READY", 10, "workload")
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
+        env["DEADLOCK_WORKLOAD_MODE"] = args.mode
         boot = ("import sys,runpy; "
                 "sys.path.append('/usr/lib/python3/dist-packages'); "
                 "import websockets; "
